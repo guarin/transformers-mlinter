@@ -58,7 +58,11 @@ LICENSE_HEADER = """# Copyright 2026 The HuggingFace Team. All rights reserved.
 
 
 def _write_custom_rules_toml(
-    tmp_dir: Path, *, trf001_description: str | None = None, trf001_default_enabled: bool | None = None
+    tmp_dir: Path,
+    *,
+    trf001_description: str | None = None,
+    trf001_default_enabled: bool | None = None,
+    trf001_file_scope: str | None = None,
 ) -> Path:
     text = mlinter.DEFAULT_RULE_SPECS_PATH.read_text(encoding="utf-8")
     if trf001_description is not None:
@@ -70,6 +74,8 @@ def _write_custom_rules_toml(
     if trf001_default_enabled is not None:
         replacement = "true" if trf001_default_enabled else "false"
         text = text.replace("default_enabled = true", f"default_enabled = {replacement}", 1)
+    if trf001_file_scope is not None:
+        text = text.replace("[rules.TRF001]\n", f'[rules.TRF001]\nfile_scope = "{trf001_file_scope}"\n', 1)
 
     custom_rules_path = tmp_dir / "custom_rules.toml"
     custom_rules_path.write_text(text, encoding="utf-8")
@@ -666,6 +672,7 @@ class FooModel(FooPreTrainedModel):
 
     def test_package_root_reexports_supported_api(self):
         self.assertIs(public_api.analyze_file, mlinter.analyze_file)
+        self.assertIs(public_api.iter_files, mlinter.iter_files)
         self.assertIs(public_api.format_rule_details, mlinter.format_rule_details)
         self.assertIs(public_api.render_rules_reference, mlinter.render_rules_reference)
         self.assertIs(public_api.Violation, _helpers_mod.Violation)
@@ -723,6 +730,7 @@ class FooModel(FooPreTrainedModel):
     def test_package_root_all_lists_supported_api(self):
         self.assertIn("__version__", public_api.__all__)
         self.assertIn("analyze_file", public_api.__all__)
+        self.assertIn("iter_files", public_api.__all__)
         self.assertIn("collect_class_bases", public_api.__all__)
         self.assertIn("model_dir_name", public_api.__all__)
         self.assertIn("render_rules_reference", public_api.__all__)
@@ -897,6 +905,21 @@ class FooModel(FooPreTrainedModel):
 
         self.assertNotEqual(default_digest, custom_digest)
         self.assertEqual(mlinter.ACTIVE_RULE_SPECS_PATH, mlinter.DEFAULT_RULE_SPECS_PATH)
+
+    def test_rule_file_scope_defaults_to_models_and_can_be_overridden(self):
+        self.assertEqual(mlinter.TRF_RULE_SPECS[mlinter.TRF001]["file_scope"], "models")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir), trf001_file_scope="src")
+            with mlinter._using_rule_specs(custom_rules_path):
+                self.assertEqual(mlinter.TRF_RULE_SPECS[mlinter.TRF001]["file_scope"], "src")
+
+    def test_rule_file_scope_rejects_unknown_values(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            custom_rules_path = _write_custom_rules_toml(Path(tmp_dir), trf001_file_scope="unknown")
+            with self.assertRaisesRegex(ValueError, "file_scope must be one of models, src"):
+                with mlinter._using_rule_specs(custom_rules_path):
+                    pass
 
     def test_main_rejects_custom_rules_toml_with_unsupported_version(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -1185,6 +1208,36 @@ class _LazyConfigMapping(OrderedDict[str, str]):
                 Path("src/transformers/models/helium/modeling_helium.py"),
                 Path("src/transformers/models/foo/modular_foo.py"),
                 Path("src/transformers/models/bar/modeling_bar.py"),
+            },
+        )
+
+    @patch("mlinter.mlinter.subprocess.run")
+    def test_get_changed_files_filters_by_enabled_rule_scopes(self, mock_run):
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "diff"],
+                returncode=0,
+                stdout=(
+                    "src/transformers/models/foo/modeling_foo.py\n"
+                    "src/transformers/utils/logging.py\n"
+                    "tests/models/foo/test_tokenization_foo.py\n"
+                    "tests/test_utils.py\n"
+                ),
+                stderr="",
+            ),
+            subprocess.CompletedProcess(args=["git", "diff"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["git", "diff", "--cached"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["git", "ls-files"], returncode=0, stdout="", stderr=""),
+        ]
+
+        with patch.dict(mlinter.TRF_RULE_SPECS[mlinter.TRF012], {"file_scope": "src"}):
+            changed_files = mlinter.get_changed_files("origin/main", {mlinter.TRF012})
+
+        self.assertEqual(
+            changed_files,
+            {
+                Path("src/transformers/models/foo/modeling_foo.py"),
+                Path("src/transformers/utils/logging.py"),
             },
         )
 
@@ -4192,6 +4245,68 @@ class FooTokenizationTest(BertTokenizationTest, unittest.TestCase):
             ):
                 found = {path.name for path in mlinter.iter_modeling_files()}
         self.assertEqual(found, {"modeling_foo.py", "test_tokenization_foo.py"})
+
+    def test_scoped_discovery_walks_only_enabled_scopes(self):
+        with patch.object(mlinter, "_iter_scope_files", wraps=mlinter._iter_scope_files) as iter_scope_files:
+            list(mlinter.iter_files({mlinter.TRF001}))
+
+        self.assertEqual([call.args[0] for call in iter_scope_files.call_args_list], ["models"])
+
+    def test_scoped_discovery_assigns_only_applicable_rules(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src_root = root / "src/transformers"
+            model_dir = src_root / "models/foo"
+            tests_root = root / "tests/models"
+            test_dir = tests_root / "foo"
+            model_dir.mkdir(parents=True)
+            test_dir.mkdir(parents=True)
+            utility = src_root / "utils.py"
+            model = model_dir / "modeling_foo.py"
+            test = test_dir / "test_tokenization_foo.py"
+            for path in (utility, model, test):
+                path.write_text("", encoding="utf-8")
+
+            with (
+                patch.object(mlinter, "SRC_ROOT", src_root),
+                patch.object(mlinter, "MODELS_ROOT", src_root / "models"),
+                patch.object(mlinter, "TESTS_ROOT", tests_root),
+                patch.dict(mlinter.TRF_RULE_SPECS[mlinter.TRF012], {"file_scope": "src"}),
+            ):
+                found = dict(mlinter.iter_files({mlinter.TRF001, mlinter.TRF012}))
+
+        self.assertEqual(found[utility], {mlinter.TRF012})
+        self.assertEqual(found[model], {mlinter.TRF001, mlinter.TRF012})
+        self.assertEqual(found[test], {mlinter.TRF001})
+
+    def test_src_scope_scans_every_python_file_under_an_explicit_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            python_files = {root / "utility.py", root / "nested/module.py"}
+            (root / "nested").mkdir()
+            for path in python_files:
+                path.write_text("", encoding="utf-8")
+            (root / "notes.txt").write_text("", encoding="utf-8")
+
+            with patch.dict(mlinter.TRF_RULE_SPECS[mlinter.TRF012], {"file_scope": "src"}):
+                found = dict(mlinter.iter_files({mlinter.TRF012}, search_paths=[root]))
+
+        self.assertEqual(set(found), python_files)
+        self.assertTrue(all(rule_ids == {mlinter.TRF012} for rule_ids in found.values()))
+
+    def test_iter_files_uses_the_active_default_rules_when_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "modeling_foo.py"
+            target.write_text("", encoding="utf-8")
+
+            default_rules = dict(mlinter.iter_files(search_paths=[root]))[target]
+            custom_rules_path = _write_custom_rules_toml(root, trf001_default_enabled=False)
+            with mlinter._using_rule_specs(custom_rules_path):
+                custom_default_rules = dict(mlinter.iter_files(search_paths=[root]))[target]
+
+        self.assertIn(mlinter.TRF001, default_rules)
+        self.assertNotIn(mlinter.TRF001, custom_default_rules)
 
     def test_changed_only_candidate_accepts_tokenization_tests(self):
         self.assertTrue(mlinter._is_modeling_candidate(Path("tests/models/foo/test_tokenization_foo.py")))

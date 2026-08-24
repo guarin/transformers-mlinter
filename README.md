@@ -7,11 +7,10 @@
 
 # mlinter
 
-A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model
-integration files — `modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`,
-`image_processing_*.py`, `video_processing_*.py` and `feature_extraction_*.py` under
-`src/transformers/models/`, plus `test_tokenization_*.py` under `tests/models/`. It enforces the
-structural conventions that keep hundreds of model implementations consistent with each other.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers).
+Rules can target model integration files and their tests, or every Python file under `src/transformers`.
+It enforces the structural conventions that keep hundreds of model implementations consistent with
+each other.
 
 **📖 Documentation: <https://huggingface.github.io/transformers-mlinter/>**
 

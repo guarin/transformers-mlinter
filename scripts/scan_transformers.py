@@ -35,7 +35,7 @@ from mlinter import (
     Violation,
     __version__,
     analyze_file,
-    iter_modeling_files,
+    iter_files,
 )
 
 
@@ -45,16 +45,16 @@ def _rule_id_from_message(message: str) -> str:
 
 
 def _collect(enabled: set[str]) -> tuple[list[Path], list[Violation]]:
-    files = list(iter_modeling_files())
+    scoped_files = list(iter_files(enabled))
     violations: list[Violation] = []
-    for path in files:
+    for path, file_rules in scoped_files:
         try:
             text = path.read_text(encoding="utf-8")
         except OSError as exc:
             print(f"  skip {path}: {exc}", file=sys.stderr)
             continue
-        violations.extend(analyze_file(path, text, enabled_rules=enabled))
-    return files, violations
+        violations.extend(analyze_file(path, text, enabled_rules=file_rules))
+    return [path for path, _ in scoped_files], violations
 
 
 def _render_report(

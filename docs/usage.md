@@ -50,17 +50,17 @@ mlinter ~/models/LLaDA-8B-Instruct/modeling_llada.py
 mlinter src/transformers/models/llama tests/models/llama
 ```
 
-A directory is searched recursively for model integration files (`modeling_*.py`, `modular_*.py`,
-`configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
-`feature_extraction_*.py`, `test_tokenization_*.py`); a file named explicitly is checked as given.
-Since the search is recursive and takes several paths at once, the layout does not matter: a GitHub
-project that keeps its model files in some directory of its own is checked by naming that directory,
-or by naming each one when they are scattered. Rules gate on the file name, so a file named something
-else — `model.py`, say — runs no rules, and mlinter says so rather than reporting a clean run. A path
-that does not exist is an error: the run stops with exit code 2 and names it, rather than quietly
-checking the rest. Files generated from a `modular_*.py` source are skipped here as they are in a
-checkout, so the modular file is the one reported on. `--changed-only` composes with paths: it narrows
-the git diff to the paths you passed.
+Discovery follows the scopes of the enabled rules. The default `models` scope searches for model
+integration files (`modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`,
+`image_processing_*.py`, `video_processing_*.py`, `feature_extraction_*.py`,
+`test_tokenization_*.py`). The `src` scope searches every `*.py` file under `src/transformers`. A scope
+is not walked unless at least one enabled rule uses it.
+
+When paths are given, directories remain scope-aware: `models` rules search for model integration
+filenames while `src` rules search every Python file below the directory. This also works outside a
+Transformers checkout. A path that does not exist is an error. Files generated from a `modular_*.py`
+source are skipped, and `--changed-only` narrows the git diff to the paths passed. A file selected by
+both scopes is read and parsed once, then checked only by the rules applicable to it.
 
 `test_tokenization_*.py` is the only test file discovered, in a checkout or out of one: [TRF042](rules/trf042.md)
 is the only rule that reads a test file. `test_modeling_*.py` and `test_processing_*.py` are walked
@@ -181,15 +181,18 @@ reimplement the patterns:
 ```python
 from pathlib import Path
 
-from mlinter import analyze_file, iter_modeling_files
+from mlinter import analyze_file, iter_files
 
-for path in iter_modeling_files(search_paths=[Path("~/models/LLaDA-8B-Instruct").expanduser()]):
-    violations = analyze_file(path, path.read_text(encoding="utf-8"))
+for path, rules in iter_files(
+    search_paths=[Path("~/models/LLaDA-8B-Instruct").expanduser()],
+):
+    violations = analyze_file(path, path.read_text(encoding="utf-8"), enabled_rules=rules)
 ```
 
 `search_paths` takes the same files and directories as the command line; without it, discovery walks
-`src/transformers/models` and `tests/models` relative to the current directory. `resolve_search_paths`
-validates a list of paths the way the CLI does, raising `ValueError` naming any that do not exist.
+the roots required by the enabled rules relative to the current directory.
+`resolve_search_paths` validates a list of paths the way the CLI does, raising `ValueError` naming any
+that do not exist.
 
 `mlinter.mlinter` and `mlinter._helpers` are implementation modules and may change without a
 compatibility promise.

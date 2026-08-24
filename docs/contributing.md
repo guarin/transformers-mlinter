@@ -58,7 +58,8 @@ allowlist, or a rethink.
    [`mlinter/rules.toml`](https://github.com/huggingface/transformers-mlinter/blob/main/mlinter/rules.toml).
 2. Fill in `description`, `default_enabled`, `explanation.what_it_does`, `explanation.why_bad`, and
    `explanation.diff`. Optional: `allowlist_models` for per-model exemptions and `cutoff_date` to scope
-   the rule to newer models.
+   the rule to newer models. Set `file_scope = "src"` for a rule that applies to every Python file under
+   `src/transformers`; the default is `"models"`.
 3. Create `mlinter/trfXXX.py` with a `check(tree, file_path, source_lines) -> list[Violation]` function.
 4. Use the `RULE_ID` module constant instead of hardcoding `"TRFXXX"` inside the check.
 5. Add or update focused tests in `tests/`.
@@ -71,9 +72,9 @@ to update.
 
 - **Static analysis only.** Use Python's `ast` module. A rule must never import the model, download
   weights, or execute the file under inspection.
-- **Gate on the filename.** Rules are handed every file kind mlinter discovers, so a rule that only
-  makes sense for `modeling_*.py` has to check the prefix itself. Widening file discovery must not
-  expose an existing rule to a file type it was never written for.
+- **Choose the narrow scope.** `file_scope = "models"` discovers only model integration files and their
+  supported tests. Use `file_scope = "src"` only when the rule applies across the source tree. A rule
+  may still gate on the filename when it targets only some files within its scope.
 - **One `check` signature.** `check(tree, file_path, source_lines) -> list[Violation]`.
 - **Honour suppressions.** Call the shared suppression helper rather than reimplementing the comment
   scan, unless the rule deliberately supports no suppression — in which case say so in a comment, as

@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Rules can set `file_scope = "models"` or `file_scope = "src"` in `rules.toml`. The default remains
+  `"models"`; source-scoped rules inspect every Python file under `src/transformers`. Discovery walks
+  only scopes used by enabled rules, and overlapping files are parsed once with only their applicable
+  rules.
+
 - Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
   `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same
   way `nn.Parameter` is, and a buffer that is an attribute can be inherited and tweaked in a modular file instead of

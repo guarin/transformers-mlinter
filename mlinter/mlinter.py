@@ -55,13 +55,14 @@ MODELING_PATTERNS = (
     "processing_*.py",
     "feature_extraction_*.py",
 )
+SRC_ROOT = Path("src/transformers")
 # Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Only tokenization
 # tests are walked because TRF042 is the only rule that looks at a test file; `test_modeling_*.py` and
-# `test_processing_*.py` belong here as soon as a rule targets them. Every rule gates on the file name
-# prefix, so widening discovery does not expose existing rules to the files it adds.
+# `test_processing_*.py` belong here as soon as a rule targets them.
 TEST_PATTERNS = ("test_tokenization_*.py",)
 ALL_PATTERNS = MODELING_PATTERNS + TEST_PATTERNS
 FILE_PREFIXES = tuple(pattern.removesuffix("*.py") for pattern in ALL_PATTERNS)
+FILE_SCOPES = frozenset({"models", "src"})
 DEFAULT_RULE_SPECS_PATH = Path(__file__).with_name("rules.toml")
 RULE_SPECS_VERSION = 1
 _RULE_REGISTRY_GLOBALS = (
@@ -177,6 +178,12 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        file_scope = spec.get("file_scope", "models")
+        if not isinstance(file_scope, str) or file_scope not in FILE_SCOPES:
+            raise ValueError(
+                f"Invalid rule spec for {rule_id}: file_scope must be one of {', '.join(sorted(FILE_SCOPES))}"
+            )
+
         # Some rules are applied on new models, released after cutoff date. We don't have to maintain a long
         # allowlist of old models where the rule is allowed due to BC, if we filter by model addition date!
         cutoff_date = spec.get("cutoff_date")
@@ -196,6 +203,7 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
             "explanation": explanation,
             "allowlist_models": set(allowlist_models),
             "cutoff_date": cutoff_date,
+            "file_scope": file_scope,
         }
 
     return specs, deprecated, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
@@ -337,29 +345,68 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
     directory when not.
     """
     if selected_paths is not None:
-        for path in sorted(selected_paths):
-            if path.exists() and not _is_generated_file(path):
-                yield path
-        return
+        candidates = sorted(selected_paths)
+    elif search_paths is not None:
+        candidates = set(_iter_scope_files("models", search_paths))
+        # Preserve the legacy API: a file named explicitly is yielded even when its name does not
+        # match a model integration pattern.
+        candidates.update(path for path in search_paths if path.is_file())
+        candidates = sorted(candidates)
+    else:
+        candidates = _iter_scope_files("models")
 
+    for path in candidates:
+        if path.exists() and not _is_generated_file(path):
+            yield path
+
+
+def _rules_by_scope(enabled_rules: set[str]) -> dict[str, set[str]]:
+    _validate_rule_ids(enabled_rules)
+    rules_by_scope: dict[str, set[str]] = {}
+    for rule_id in enabled_rules:
+        scope = cast(str, TRF_RULE_SPECS[rule_id]["file_scope"])
+        rules_by_scope.setdefault(scope, set()).add(rule_id)
+    return rules_by_scope
+
+
+def _iter_scope_files(scope: str, search_paths: list[Path] | None = None):
     if search_paths is not None:
-        candidates: set[Path] = set()
+        patterns = ALL_PATTERNS if scope == "models" else ("*.py",)
         for search_path in search_paths:
-            # A file named explicitly is linted as given: rules gate on the file name themselves, so a
-            # path the patterns would not have matched simply runs no rules rather than being an error.
             if search_path.is_dir():
-                candidates.update(_iter_pattern_matches(search_path, ALL_PATTERNS))
-            else:
-                candidates.add(search_path)
-        for path in sorted(candidates):
-            if not _is_generated_file(path):
-                yield path
+                yield from _iter_pattern_matches(search_path, patterns)
+            elif _is_scope_candidate(search_path, scope, search_paths):
+                yield search_path
         return
 
-    for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
-        for path in _iter_pattern_matches(root, patterns):
-            if not _is_generated_file(path):
-                yield path
+    if scope == "models":
+        for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
+            yield from _iter_pattern_matches(root, patterns)
+    else:
+        yield from SRC_ROOT.rglob("*.py")
+
+
+def iter_files(
+    enabled_rules: set[str] | None = None,
+    selected_paths: set[Path] | None = None,
+    search_paths: list[Path] | None = None,
+):
+    """Yield each file and the enabled rules whose scopes selected it."""
+    if enabled_rules is None:
+        enabled_rules = DEFAULT_ENABLED_TRF_RULES
+
+    files_to_rules: dict[Path, set[str]] = {}
+    for scope, rule_ids in _rules_by_scope(enabled_rules).items():
+        candidates = selected_paths if selected_paths is not None else _iter_scope_files(scope, search_paths)
+        for path in candidates:
+            if not _is_scope_candidate(path, scope, search_paths):
+                continue
+            files_to_rules.setdefault(path, set()).update(rule_ids)
+
+    for path, rule_ids in sorted(files_to_rules.items()):
+        is_generated_model_file = path.name.startswith(FILE_PREFIXES) and _is_generated_file(path)
+        if path.exists() and not is_generated_model_file:
+            yield path, rule_ids
 
 
 def colored_error_message(file_path: str, line_number: int, message: str) -> str:
@@ -386,6 +433,16 @@ def _is_modeling_candidate(file_path: Path, search_paths: list[Path] | None = No
     return MODELS_ROOT in file_path.parents or TESTS_ROOT in file_path.parents
 
 
+def _is_scope_candidate(file_path: Path, scope: str, search_paths: list[Path] | None = None) -> bool:
+    if file_path.suffix != ".py":
+        return False
+    if search_paths is not None and not any(_path_is_within(file_path, path) for path in search_paths):
+        return False
+    if scope == "src":
+        return search_paths is not None or _path_is_within(file_path, SRC_ROOT)
+    return _is_modeling_candidate(file_path, search_paths)
+
+
 def _git_name_only(command: list[str]) -> list[str]:
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode != 0:
@@ -406,16 +463,24 @@ def _git_worktree_changes() -> set[Path]:
     return {Path(path_str) for path_str in changed_paths}
 
 
-def get_changed_modeling_files(base_ref: str, search_paths: list[Path] | None = None) -> set[Path]:
+def _get_changed_paths(base_ref: str) -> set[Path]:
     changed_paths = _git_diff(base_ref, triple_dot=True)
     if not changed_paths:
         changed_paths = _git_diff(base_ref, triple_dot=False)
+    return {Path(path_str) for path_str in changed_paths}.union(_git_worktree_changes())
 
-    filtered_paths: set[Path] = set()
-    for path in {Path(path_str) for path_str in changed_paths}.union(_git_worktree_changes()):
-        if _is_modeling_candidate(path, search_paths):
-            filtered_paths.add(path)
-    return filtered_paths
+
+def get_changed_modeling_files(base_ref: str, search_paths: list[Path] | None = None) -> set[Path]:
+    return {path for path in _get_changed_paths(base_ref) if _is_modeling_candidate(path, search_paths)}
+
+
+def get_changed_files(base_ref: str, enabled_rules: set[str], search_paths: list[Path] | None = None) -> set[Path]:
+    scopes = _rules_by_scope(enabled_rules)
+    return {
+        path
+        for path in _get_changed_paths(base_ref)
+        if any(_is_scope_candidate(path, scope, search_paths) for scope in scopes)
+    }
 
 
 CheckFn = Callable[[ast.Module, Path, list[str]], list[Violation]]
@@ -556,10 +621,9 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         type=Path,
         metavar="PATH",
-        help="Files or directories to check. A directory is searched recursively for model integration "
-        f"files ({', '.join(ALL_PATTERNS)}); a file is checked as given. Use this to lint a standalone "
-        "model repository, which does not mirror the transformers layout. Defaults to "
-        f"{MODELS_ROOT} and {TESTS_ROOT} relative to the current directory.",
+        help="Files or directories to check. Directories are searched according to the scopes of the "
+        "enabled rules. Use this to lint a standalone repository. Without paths, model rules search "
+        f"{MODELS_ROOT} and {TESTS_ROOT}, and source rules search {SRC_ROOT}.",
     )
     parser.add_argument(
         "--rules-toml",
@@ -570,7 +634,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--changed-only",
         action="store_true",
-        help="Only check changed model integration files compared to --base-ref, plus local worktree changes.",
+        help="Only check changed files compared to --base-ref, plus local worktree changes.",
     )
     parser.add_argument(
         "--base-ref",
@@ -681,25 +745,41 @@ def maybe_handle_rule_docs_cli(args: argparse.Namespace) -> bool:
     return False
 
 
-def warn_about_search_paths(search_paths: list[Path], modeling_files: list[Path], warn_when_empty: bool) -> None:
+def warn_about_search_paths(
+    search_paths: list[Path],
+    files: list[tuple[Path, set[str]]],
+    warn_when_empty: bool,
+    enabled_rules: set[str] | None = None,
+) -> None:
     """Explain a run that checked nothing, so an empty run never reads as a clean one.
 
-    Every rule gates on the file name, so a file whose name carries none of the known prefixes runs no
-    rules at all and would otherwise be reported as `OK`. `warn_when_empty` is False under
-    `--changed-only`, where finding no file means nothing changed rather than nothing to check.
+    `warn_when_empty` is False under `--changed-only`, where finding no file means nothing changed
+    rather than nothing to check.
     """
+    scopes = set(_rules_by_scope(DEFAULT_ENABLED_TRF_RULES if enabled_rules is None else enabled_rules))
     for search_path in search_paths:
-        if search_path.is_file() and not search_path.name.startswith(FILE_PREFIXES):
+        if search_path.is_file() and not any(
+            _is_scope_candidate(search_path, scope, search_paths) for scope in scopes
+        ):
+            if scopes == {"models"}:
+                message = (
+                    f"Warning: {search_path} is not a model integration file "
+                    f"({', '.join(ALL_PATTERNS)}), so no rule applies to it."
+                )
+            else:
+                message = f"Warning: {search_path} does not match an enabled rule scope, so no rule applies to it."
             print(
-                f"Warning: {search_path} is not a model integration file "
-                f"({', '.join(ALL_PATTERNS)}), so no rule applies to it.",
+                message,
                 file=sys.stderr,
             )
-    if warn_when_empty and not modeling_files:
-        print(
-            f"Warning: no model integration file found in {', '.join(str(path) for path in search_paths)}.",
-            file=sys.stderr,
-        )
+    if warn_when_empty and not files:
+        if scopes == {"models"}:
+            message = f"Warning: no model integration file found in {', '.join(str(path) for path in search_paths)}."
+        else:
+            message = (
+                f"Warning: no file in an enabled rule scope found in {', '.join(str(path) for path in search_paths)}."
+            )
+        print(message, file=sys.stderr)
 
 
 def main() -> int:
@@ -718,15 +798,17 @@ def main() -> int:
         violations: list[Violation] = []
         enabled_rules = resolve_enabled_rules(args)
         search_paths = resolve_search_paths(args.paths)
-        selected_paths = get_changed_modeling_files(args.base_ref, search_paths) if args.changed_only else None
+        selected_paths = get_changed_files(args.base_ref, enabled_rules, search_paths) if args.changed_only else None
 
-        modeling_files = list(iter_modeling_files(selected_paths, search_paths))
+        files = list(iter_files(enabled_rules, selected_paths, search_paths))
         if search_paths is not None:
-            warn_about_search_paths(search_paths, modeling_files, warn_when_empty=selected_paths is None)
+            warn_about_search_paths(
+                search_paths, files, warn_when_empty=selected_paths is None, enabled_rules=enabled_rules
+            )
 
         show_progress = should_show_progress(args)
         status_ctx = (
-            CONSOLE.status(f"[bold blue]Checking modeling structure ({len(modeling_files)} files)...[/bold blue]")
+            CONSOLE.status(f"[bold blue]Checking {len(files)} files...[/bold blue]")
             if show_progress
             else nullcontext()
         )
@@ -736,19 +818,21 @@ def main() -> int:
         new_cache: dict[str, str] = {}
 
         with status_ctx:
-            for file_path in modeling_files:
+            for file_path, file_rules in files:
                 try:
                     text = file_path.read_text(encoding="utf-8")
                     # Absolute: the cache is shared by every checkout, and a relative path such as
                     # `modeling_llada.py` names a different file in each standalone model repo.
                     file_key = str(file_path.resolve())
-                    digest = _content_hash(text, enabled_rules, _find_companion_files(file_path))
+                    has_model_rules = any(TRF_RULE_SPECS[rule_id]["file_scope"] == "models" for rule_id in file_rules)
+                    companion_files = _find_companion_files(file_path) if has_model_rules else None
+                    digest = _content_hash(text, file_rules, companion_files)
 
                     if use_cache and cache.get(file_key) == digest:
                         new_cache[file_key] = digest
                         continue
 
-                    file_violations = analyze_file(file_path, text, enabled_rules=enabled_rules)
+                    file_violations = analyze_file(file_path, text, enabled_rules=file_rules)
                     violations.extend(file_violations)
 
                     if not file_violations:

@@ -9,9 +9,10 @@ permalink: /
 # mlinter <span class="version-badge">v{{ site.data.mlinter.version }}</span>
 {: .no_toc }
 
-A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers) model
-integration files. It enforces the structural conventions that keep hundreds of model implementations
-consistent with each other.
+A standalone linter for [Hugging Face Transformers](https://github.com/huggingface/transformers).
+Rules can target model integration files and their tests, or every Python file under `src/transformers`.
+It enforces the structural conventions that keep hundreds of model implementations consistent with
+each other.
 {: .fs-6 .fw-300 }
 
 [Browse the rules](rules/index.md){: .btn .btn-primary .mr-2 }
