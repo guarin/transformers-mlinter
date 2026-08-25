@@ -27,6 +27,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   only scopes used by enabled rules, and overlapping files are parsed once with only their applicable
   rules.
 
+- Extended `TRF038` to `tokenization_*.py`: a tokenizer source file now needs a matching
+  `tests/models/<model>/test_tokenization_*.py`, closing the last model-directory file type the rule did not
+  cover. `tokenization_<name>_fast.py` maps to `test_tokenization_<name>.py` rather than a fast test file of its
+  own, since that is where a fast tokenizer is exercised, and a `tokenization_utils*.py` helper module (such as
+  `roformer/tokenization_utils.py`, which holds a Jieba pre-tokenizer) owns no test file. `modular_*.py` files
+  gained the matching class-name mapping, so `XxxTokenizer` / `XxxTokenizerFast` defined in a modular file also
+  ask for a tokenizer test. Ships with `tokenization_*.py` added to `MODELING_PATTERNS`, which widens discovery
+  for every rule -- all other rules gate on the file-name prefix or on AST content, and a full run over
+  transformers confirmed the widening adds no findings outside `TRF038`. The violation message now follows the
+  kind of test file that is missing, asking for a small hand-written vocabulary rather than a dummy config and
+  random weights when the gap is a tokenizer test. Requested in
+  [huggingface/transformers-mlinter#23](https://github.com/huggingface/transformers-mlinter/issues/23).
+
 - Added `TRF058`, which flags `register_buffer("<name>", ...)` calls in `modeling_*.py` and `modular_*.py` and asks for
   `<name> = nn.Buffer(...)` instead. Since torch>=2.5 a buffer can be declared by plain attribute assignment, the same
   way `nn.Parameter` is, and a buffer that is an attribute can be inherited and tweaked in a modular file instead of
@@ -42,6 +55,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   different signature silently transforms the wrong tensor or none at all. Common aliases such as
   `selected_experts` and `routing_weights` are accepted, and inherited `forward` methods are resolved.
   `llama4` is allowlisted for now.
+
+### Changed
+
+- Rewrote the `what_it_does` and `why_bad` prose in `rules.toml`, cutting it by a fifth overall and far more than
+  that where it had run away: `TRF009` 3244 -> 1220 characters, `TRF041` 2418 -> 1457, `TRF038` 1940 -> 1301,
+  `TRF042` 1620 -> 1032. No rule's explanation is over 1500 characters any more, down from 3244. What went is
+  repeated justification, review-culture asides ("reviewers ask for this on every new model") and release trivia
+  that belongs in this file; what stayed is the scope, the exemptions and the fix. Every rule page now reads as
+  two tight paragraphs -- what is flagged and what is exempt, then what breaks and what to do instead -- so a
+  contributor landing on one from a failing CI job gets the answer without wading to it.
+
+- `generation_*.py` files in a model directory are now discovered, so rules see them for the first time. There are
+  ten in transformers (`generation_whisper.py`, `generation_parakeet.py`, `generation_csm.py`, ...) and they hold
+  model implementation code, but no pattern in `MODELING_PATTERNS` matched them. `TRF009` gained the matching prefix
+  and reports the two real cross-model imports the widening exposes: `nemotron3_5_asr` importing from
+  `nemotron_asr_streaming`, and that in turn from `parakeet`. A full run over transformers confirms the widening
+  adds nothing else -- 40 findings before, 42 after, both new ones `TRF009` -- so the dozen rules that gate on AST
+  content rather than on a file-name prefix are unaffected. Note the pattern also claims a `generation_utils.py`
+  helper, which matters mainly when linting a standalone model repository. Closes
+  [#49](https://github.com/huggingface/transformers-mlinter/issues/49).
+
+- Widened `TRF009` on both axes it was missing. It now runs on every file in a model directory --
+  `configuration_*.py`, `processing_*.py`, `image_processing_*.py`, `video_processing_*.py`,
+  `feature_extraction_*.py` and `tokenization_*.py` as well as `modeling_*.py` -- since a config that imports
+  another model's config couples the two models just as tightly as a modeling file that does; `modular_*.py`
+  stays exempt, while `convert_*.py` and `__init__.py` are out of scope -- a conversion script legitimately
+  builds a checkpoint out of whatever the original release shipped, and an `__init__.py` alias is the same
+  coupling already reported on the tokenizer file itself. It also recognises the public-API form,
+  `from transformers import CLIPTextModelWithProjection`, which reached another model's implementation without
+  naming its package and so went unreported. Because that form gives only a class name, the owning directory is
+  recovered from the name and then confirmed against the classes that directory really defines, so a shared class
+  that merely reads like a model prefix (`BitsAndBytesConfig` vs the `bit` directory) is not reported, and a name
+  that cannot be resolved -- outside a transformers checkout, say -- is left alone rather than guessed at. The
+  relative form now also covers `from ...models.other.modeling_other import X`, which names the models package
+  on the way up. `timm_wrapper` joins `auto` as an always-exempt import target: it is the adapter that exposes any timm
+  backbone as a transformers model, so `TimmWrapperConfig` names a shared entry point the way `AutoConfig`
+  does; files inside `auto` are now skipped outright, since naming every model's classes is what that
+  package is for. Fourteen real cross-model imports in transformers were found by the widening: six in
+  `configuration_*.py` and `processing_*.py` files, six older tokenizers that subclass another model's
+  tokenizer (`bart` from `roberta`, `fnet` from `albert`, `convbert`/`distilbert`/`mobilebert`/`squeezebert`
+  from `bert`), and two the `from transformers import CLIP*` form in `sam3`. Requested in [#5](https://github.com/huggingface/transformers-mlinter/issues/5) and
+  [#39](https://github.com/huggingface/transformers-mlinter/issues/39).
 
 ### Fixed
 

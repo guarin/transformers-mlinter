@@ -50,17 +50,23 @@ mlinter ~/models/LLaDA-8B-Instruct/modeling_llada.py
 mlinter src/transformers/models/llama tests/models/llama
 ```
 
-Discovery follows the scopes of the enabled rules. The default `models` scope searches for model
-integration files (`modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`,
-`image_processing_*.py`, `video_processing_*.py`, `feature_extraction_*.py`,
-`test_tokenization_*.py`). The `src` scope searches every `*.py` file under `src/transformers`. A scope
-is not walked unless at least one enabled rule uses it.
+Discovery follows the scopes of the enabled rules. The default `models` scope searches recursively for
+model integration files (`modeling_*.py`, `modular_*.py`, `configuration_*.py`, `processing_*.py`,
+`image_processing_*.py`, `video_processing_*.py`, `feature_extraction_*.py`, `tokenization_*.py`,
+`generation_*.py`, `test_tokenization_*.py`); the `src` scope searches every `*.py` file under
+`src/transformers`. A scope is not walked unless at least one enabled rule uses it, and a file selected
+by both scopes is read and parsed once, then checked only by the rules applicable to it.
 
-When paths are given, directories remain scope-aware: `models` rules search for model integration
-filenames while `src` rules search every Python file below the directory. This also works outside a
-Transformers checkout. A path that does not exist is an error. Files generated from a `modular_*.py`
-source are skipped, and `--changed-only` narrows the git diff to the paths passed. A file selected by
-both scopes is read and parsed once, then checked only by the rules applicable to it.
+When paths are given, a file named explicitly is checked as given, while directories remain
+scope-aware: `models` rules search for model integration filenames while `src` rules search every
+Python file below the directory. Since the search is recursive and takes several paths at once, the
+layout does not matter: a GitHub project that keeps its model files in some directory of its own is
+checked by naming that directory, or by naming each one when they are scattered. `models` rules gate on
+the file name, so a file named something else — `model.py`, say — runs no rules, and mlinter says so
+rather than reporting a clean run. A path that does not exist is an error: the run stops with exit code
+2 and names it, rather than quietly checking the rest. Files generated from a `modular_*.py` source are
+skipped here as they are in a checkout, so the modular file is the one reported on. `--changed-only`
+composes with paths: it narrows the git diff to the paths you passed.
 
 `test_tokenization_*.py` is the only test file discovered, in a checkout or out of one: [TRF042](rules/trf042.md)
 is the only rule that reads a test file. `test_modeling_*.py` and `test_processing_*.py` are walked

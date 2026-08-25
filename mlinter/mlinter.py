@@ -53,6 +53,8 @@ MODELING_PATTERNS = (
     "video_processing_*.py",
     "processing_*.py",
     "feature_extraction_*.py",
+    "tokenization_*.py",
+    "generation_*.py",
 )
 SRC_ROOT = Path("src/transformers")
 # The trailing path segments that mark a transformers package tree, used to recognize an explicitly

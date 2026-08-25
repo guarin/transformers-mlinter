@@ -34,7 +34,18 @@ _TEST_PREFIX_BY_SOURCE_PREFIX = {
     "image_processing_": "test_image_processing_",
     "video_processing_": "test_video_processing_",
     "feature_extraction_": "test_feature_extraction_",
+    "tokenization_": "test_tokenization_",
 }
+
+# What the cheapest test that satisfies the rule looks like, which differs by file kind: a model can
+# be exercised on a dummy config, while a tokenizer needs something to tokenize against.
+_MINIMAL_TEST_HINT = "a minimal test built on a dummy config and randomly initialized weights"
+_MINIMAL_TOKENIZER_TEST_HINT = "a minimal test built on a small hand-written vocabulary"
+
+# Tokenizer helper modules that sit in a model directory without defining a tokenizer of their own
+# (e.g. `roformer/tokenization_utils.py`, which holds a Jieba pre-tokenizer). They are exercised
+# through the tokenizer that uses them, so they own no test file.
+_TOKENIZATION_HELPER_STEM = "tokenization_utils"
 
 # Used to infer which tests are needed for modular's content
 _CLASS_SUFFIX_TEST_PREFIX = (
@@ -42,6 +53,8 @@ _CLASS_SUFFIX_TEST_PREFIX = (
     ("ImageProcessor", "test_image_processing_"),
     ("VideoProcessor", "test_video_processing_"),
     ("FeatureExtractor", "test_feature_extraction_"),
+    ("TokenizerFast", "test_tokenization_"),
+    ("Tokenizer", "test_tokenization_"),
     ("Processor", "test_processing_"),
     ("PreTrainedModel", "test_modeling_"),
     ("Model", "test_modeling_"),
@@ -92,6 +105,13 @@ def _expected_test_file(file_path: Path) -> Path | None:
     source_prefix, test_prefix = match
 
     suffix = stem[len(source_prefix) :]
+    if source_prefix == "tokenization_":
+        if stem == _TOKENIZATION_HELPER_STEM or stem.startswith(f"{_TOKENIZATION_HELPER_STEM}_"):
+            return None
+        # A `tokenization_<name>_fast.py` file is covered by the same `test_tokenization_<name>.py`
+        # as its slow counterpart -- transformers ships no `test_tokenization_*_fast.py` file -- so
+        # the `_fast` marker is dropped before the expected path is built.
+        suffix = suffix.removesuffix("_fast")
     return TESTS_ROOT / model_dir / f"{test_prefix}{suffix}.py"
 
 
@@ -118,6 +138,13 @@ def _expected_test_files_modular(tree: ast.Module, file_path: Path) -> list[Path
     return sorted(TESTS_ROOT / model_dir / f"{test_prefix}{suffix}.py" for test_prefix in test_prefixes)
 
 
+def _minimal_test_hint(test_file: Path) -> str:
+    """How to satisfy the rule cheaply, phrased for the kind of test file that is missing."""
+    if test_file.name.startswith("test_tokenization_"):
+        return _MINIMAL_TOKENIZER_TEST_HINT
+    return _MINIMAL_TEST_HINT
+
+
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
     if file_path.name.startswith("modular_"):
         expected_test_files = _expected_test_files_modular(tree, file_path)
@@ -129,9 +156,9 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
     if not missing_test_files:
         return []
 
-    # Deliberately no `# trf-ignore: TRF038` support: every modeling/processing file can be
-    # exercised with a dummy config and randomly initialized weights, so there is no legitimate
-    # per-file exemption. Models that genuinely cannot add a test yet go in
+    # Deliberately no `# trf-ignore: TRF038` support: every one of these files can be exercised on
+    # something made up -- a dummy config for a model, a hand-written vocabulary for a tokenizer --
+    # so there is no legitimate per-file exemption. Models that genuinely cannot add a test yet go in
     # `allowlist_models` in rules.toml, which is visible in review instead of buried in the diff.
     return [
         Violation(
@@ -139,8 +166,7 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             line_number=1,
             message=(
                 f"{RULE_ID}: no test file found at `{test_file}` for `{file_path}`. "
-                "Add one, even a minimal test built on a dummy config and randomly initialized "
-                "weights if no real checkpoint exists yet."
+                f"Add one, even {_minimal_test_hint(test_file)} if no real checkpoint exists yet."
             ),
         )
         for test_file in missing_test_files
