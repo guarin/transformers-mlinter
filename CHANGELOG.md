@@ -9,8 +9,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- Added `TRF060`, which scans every Python file under `src/transformers` and flags absolute imports
+  from the `transformers` package itself. Internal references must use relative imports. Generated
+  files, standalone `convert_*.py` model conversion scripts, and the entire `cli/` subtree are
+  skipped, while tests remain outside the source scope. Importable root helpers such as
+  `convert_slow_tokenizer.py` remain checked. Cutoff dates use model contribution dates within
+  `src/transformers/models`, and the first copyright year in the header for other source files; a
+  file is grandfathered only when that year is strictly older than the cutoff year, so a missing or
+  matching year leaves the file checked. This fallback lives in the shared `is_exempt_by_cutoff`
+  helper and is enabled when TRF060 supplies source lines; existing model rules retain their
+  contribution-date-only cutoff behavior.
+
 - Rules can set `file_scope = "models"` or `file_scope = "src"` in `rules.toml`. The default remains
-  `"models"`; source-scoped rules inspect every Python file under `src/transformers`. Discovery walks
+  `"models"`; source-scoped rules inspect every Python file under `src/transformers`, including when
+  such a path is named explicitly. A file outside a `src/transformers` tree stays out of the source
+  scope, so linting a standalone model repo never applies package conventions to it. Discovery walks
   only scopes used by enabled rules, and overlapping files are parsed once with only their applicable
   rules.
 

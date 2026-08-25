@@ -30,12 +30,11 @@ from rich import print
 from rich.console import Console
 
 from ._helpers import (
-    GENERATED_FILE_MARKER,
     MODELS_ROOT,
     TESTS_ROOT,
     Violation,
     _model_dir_name,
-    read_file_head,
+    is_generated_file,
 )
 from ._version import __version__
 
@@ -56,6 +55,9 @@ MODELING_PATTERNS = (
     "feature_extraction_*.py",
 )
 SRC_ROOT = Path("src/transformers")
+# The trailing path segments that mark a transformers package tree, used to recognize an explicitly
+# named source file when the run does not start from the checkout root.
+SRC_PACKAGE_PARTS = SRC_ROOT.parts
 # Test files a rule may target, discovered under TESTS_ROOT rather than MODELS_ROOT. Only tokenization
 # tests are walked because TRF042 is the only rule that looks at a test file; `test_modeling_*.py` and
 # `test_processing_*.py` belong here as soon as a rule targets them.
@@ -308,18 +310,6 @@ def _rule_id_from_module_name(name: str) -> str | None:
     return name.upper()
 
 
-def _is_generated_file(path: Path) -> bool:
-    """Whether ``path`` is a derived file produced from a ``modular_*.py`` source.
-
-    Generated files (e.g. ``modeling_*.py`` / ``configuration_*.py`` emitted by the modular
-    converter) carry an auto-generation banner near the top. They are derived artifacts: the
-    modular source is linted instead, so scanning them only produces violations that cannot be
-    fixed in place (edits get overwritten on the next generation).
-    """
-    head = read_file_head(path)
-    return head is not None and GENERATED_FILE_MARKER in head
-
-
 def resolve_search_paths(paths: list[Path]) -> list[Path] | None:
     """Validate the files/directories given on the command line, or None when none were given."""
     if not paths:
@@ -356,7 +346,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
         candidates = _iter_scope_files("models")
 
     for path in candidates:
-        if path.exists() and not _is_generated_file(path):
+        if path.exists() and not is_generated_file(path):
             yield path
 
 
@@ -404,8 +394,7 @@ def iter_files(
             files_to_rules.setdefault(path, set()).update(rule_ids)
 
     for path, rule_ids in sorted(files_to_rules.items()):
-        is_generated_model_file = path.name.startswith(FILE_PREFIXES) and _is_generated_file(path)
-        if path.exists() and not is_generated_model_file:
+        if path.exists() and not is_generated_file(path):
             yield path, rule_ids
 
 
@@ -433,13 +422,26 @@ def _is_modeling_candidate(file_path: Path, search_paths: list[Path] | None = No
     return MODELS_ROOT in file_path.parents or TESTS_ROOT in file_path.parents
 
 
+def _is_src_candidate(file_path: Path) -> bool:
+    """Whether `file_path` lives inside a `src/transformers` package tree.
+
+    Source rules encode conventions of the transformers package itself, so an explicitly named path
+    never pulls a file outside such a tree into scope: the same code is correct in a standalone model
+    repo (importing `transformers` by its absolute name, say), and flagging it there would be wrong.
+    """
+    if _path_is_within(file_path, SRC_ROOT):
+        return True
+    parts = file_path.resolve().parts
+    return any(parts[index : index + 2] == SRC_PACKAGE_PARTS for index in range(len(parts) - 2))
+
+
 def _is_scope_candidate(file_path: Path, scope: str, search_paths: list[Path] | None = None) -> bool:
     if file_path.suffix != ".py":
         return False
     if search_paths is not None and not any(_path_is_within(file_path, path) for path in search_paths):
         return False
     if scope == "src":
-        return search_paths is not None or _path_is_within(file_path, SRC_ROOT)
+        return _is_src_candidate(file_path)
     return _is_modeling_candidate(file_path, search_paths)
 
 
@@ -745,6 +747,19 @@ def maybe_handle_rule_docs_cli(args: argparse.Namespace) -> bool:
     return False
 
 
+def _scope_phrase(scopes: set[str], detailed: bool = False) -> str:
+    """Name the kinds of file the enabled rules look at, so a warning says what was expected.
+
+    `detailed` spells out the file name patterns of the models scope and prefixes each kind with an
+    article, for messages phrased as "... is not <phrase>".
+    """
+    labels = {"models": "model integration file", "src": f"file under {SRC_ROOT}"}
+    if detailed:
+        labels["models"] += f" ({', '.join(ALL_PATTERNS)})"
+        return " or ".join(f"a {labels[scope]}" for scope in sorted(scopes))
+    return " or ".join(labels[scope] for scope in sorted(scopes))
+
+
 def warn_about_search_paths(
     search_paths: list[Path],
     files: list[tuple[Path, set[str]]],
@@ -761,25 +776,15 @@ def warn_about_search_paths(
         if search_path.is_file() and not any(
             _is_scope_candidate(search_path, scope, search_paths) for scope in scopes
         ):
-            if scopes == {"models"}:
-                message = (
-                    f"Warning: {search_path} is not a model integration file "
-                    f"({', '.join(ALL_PATTERNS)}), so no rule applies to it."
-                )
-            else:
-                message = f"Warning: {search_path} does not match an enabled rule scope, so no rule applies to it."
             print(
-                message,
+                f"Warning: {search_path} is not {_scope_phrase(scopes, detailed=True)}, so no rule applies to it.",
                 file=sys.stderr,
             )
     if warn_when_empty and not files:
-        if scopes == {"models"}:
-            message = f"Warning: no model integration file found in {', '.join(str(path) for path in search_paths)}."
-        else:
-            message = (
-                f"Warning: no file in an enabled rule scope found in {', '.join(str(path) for path in search_paths)}."
-            )
-        print(message, file=sys.stderr)
+        print(
+            f"Warning: no {_scope_phrase(scopes)} found in {', '.join(str(path) for path in search_paths)}.",
+            file=sys.stderr,
+        )
 
 
 def main() -> int:

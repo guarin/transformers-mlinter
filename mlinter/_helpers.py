@@ -35,6 +35,7 @@ _CONTRIBUTION_DATE_RE = re.compile(
     r"\n\*This model was (?:published in HF papers on (.*) and )?"
     r"contributed to Hugging Face Transformers on (\d{4}-\d{2}-\d{2})\.\*"
 )
+_COPYRIGHT_YEAR_RE = re.compile(r"\bcopyright(?:\s+\([cC]\))?\s+(\d{4})\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,18 @@ def read_file_head(path: Path) -> str | None:
             return handle.read(GENERATED_FILE_HEAD_SIZE)
     except OSError:
         return None
+
+
+def is_generated_file(path: Path) -> bool:
+    """Whether ``path`` is a derived file produced from a ``modular_*.py`` source.
+
+    Generated files (e.g. ``modeling_*.py`` / ``configuration_*.py`` emitted by the modular
+    converter) carry an auto-generation banner near the top. They are derived artifacts: the
+    modular source is linted instead, so scanning them only produces violations that cannot be
+    fixed in place (edits get overwritten on the next generation).
+    """
+    head = read_file_head(path)
+    return head is not None and GENERATED_FILE_MARKER in head
 
 
 def full_name(node: ast.AST):
@@ -127,17 +140,36 @@ def model_contribution_date(file_path: Path) -> date | None:
     return None
 
 
-def is_exempt_by_cutoff(file_path: Path, cutoff_date: str) -> bool:
-    """Whether the model owning `file_path` predates `cutoff_date` and is therefore grandfathered.
+def _copyright_year(source_lines: list[str]) -> int | None:
+    for line in source_lines[:25]:
+        match = _COPYRIGHT_YEAR_RE.search(line)
+        if match is not None:
+            return int(match.group(1))
+    return None
 
-    Rules that encode a convention introduced at some point in time use this so they do not need to
-    carry an allowlist of every model added before it. Models whose doc page has no contribution date
-    are checked, so a missing date never silently disables a rule.
+
+def is_exempt_by_cutoff(file_path: Path, cutoff_date: str, source_lines: list[str] | None = None) -> bool:
+    """Whether a file predates ``cutoff_date`` and is therefore grandfathered.
+
+    The two-argument API uses the owning model's documented contribution date. When ``source_lines``
+    are supplied, the first copyright year in the file header is used as a fallback, and grandfathers
+    a file only when that year is strictly older than the cutoff year. A file whose copyright year is
+    missing or equal to the cutoff year stays checked, so missing metadata never silently disables a
+    rule.
     """
     if not cutoff_date:
         return False
+    cutoff = date.fromisoformat(cutoff_date)
     contribution_date = model_contribution_date(file_path)
-    return contribution_date is not None and contribution_date < date.fromisoformat(cutoff_date)
+    if contribution_date is not None:
+        return contribution_date < cutoff
+    # Existing model-scoped rules use the two-argument API and retain their original behavior:
+    # missing model contribution metadata does not exempt the file. Source-wide rules can opt into
+    # the copyright fallback by supplying the source lines.
+    if source_lines is None:
+        return False
+    copyright_year = _copyright_year(source_lines)
+    return copyright_year is not None and copyright_year < cutoff.year
 
 
 def _has_rule_suppression(lines: list[str], rule_id: str, line_number: int) -> bool:

@@ -1032,3 +1032,20 @@ diff = '''
 +    def forward(self, hidden_states, top_k_index, top_k_weights):
          ...
 '''
+
+[rules.TRF060]
+description = "Source files must use relative imports for references within the transformers package."
+default_enabled = true
+allowlist_models = []
+file_scope = "src"
+cutoff_date = "2026-06-20"
+
+[rules.TRF060.explanation]
+what_it_does = "Checks every Python file under `src/transformers` for absolute imports rooted at `transformers`, including `from transformers... import ...` and `import transformers...`. Auto-generated files, standalone `convert_*.py` model conversion scripts, files under `cli/`, and tests are skipped."
+why_bad = "Transformers uses relative imports by convention."
+diff = '''
+-from transformers.utils import logging
+-import transformers.models.auto as auto_module
++from .utils import logging
++from .models import auto as auto_module
+'''
