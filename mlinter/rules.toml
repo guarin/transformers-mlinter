@@ -124,6 +124,7 @@ diff = '''
 description = "No file in a model directory may import implementation code from another model package."
 default_enabled = true
 allowlist_models = ["dpr", "maskformer", "sam3_video", "vision_text_dual_encoder"]
+include_generated_files = true
 
 [rules.TRF009.explanation]
 what_it_does = "Flags imports into another model's package from a model's shipped implementation files: modeling_*, configuration_*, processing_*, image_processing_*, video_processing_*, feature_extraction_*, tokenization_* and generation_*.py. Three forms count: package path (`from transformers.models.other.modeling_other import X`), relative path (`from ..other.configuration_other import X`) and public API (`from transformers import OtherModel`) -- for the last the owning directory is inferred from the class name and confirmed against the classes it defines, so an unresolvable name is left alone. Out of scope: `modular_*.py` (building on another model is its purpose, and the converter flattens those imports away), `convert_*.py`, `__init__.py` and files under `auto`. Allowed targets: the model's own directory, `auto` and `timm_wrapper`."

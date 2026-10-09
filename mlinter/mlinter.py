@@ -179,6 +179,12 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
         if not isinstance(allowlist_models, list) or any(not isinstance(item, str) for item in allowlist_models):
             raise ValueError(f"Invalid rule spec for {rule_id}: allowlist_models must be list[str]")
 
+        # Files generated from a modular source are skipped unless a rule opts in: most violations there
+        # have to be fixed in the modular source, which is linted instead.
+        include_generated_files = spec.get("include_generated_files", False)
+        if not isinstance(include_generated_files, bool):
+            raise ValueError(f"Invalid rule spec for {rule_id}: include_generated_files must be bool")
+
         # A rule that exempts config attributes (TRF041) reads its extra exemptions from here, so a
         # project pointing `--rules-toml` at its own copy can widen the list without an mlinter release.
         ignored_attributes = spec.get("ignored_attributes", [])
@@ -205,6 +211,7 @@ def _load_rule_specs(rule_specs_path: Path) -> tuple[dict[str, dict], dict[str, 
             "allowlist_models": set(allowlist_models),
             "cutoff_date": cutoff_date,
             "ignored_attributes": frozenset(ignored_attributes),
+            "include_generated_files": include_generated_files,
         }
 
     return specs, deprecated, hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
@@ -321,6 +328,11 @@ def _is_generated_file(path: Path) -> bool:
     return head is not None and GENERATED_FILE_MARKER in head
 
 
+def _generated_file_rules(enabled_rules: set[str]) -> set[str]:
+    """The subset of `enabled_rules` whose spec sets `include_generated_files`."""
+    return {rule_id for rule_id in enabled_rules if TRF_RULE_SPECS.get(rule_id, {}).get("include_generated_files")}
+
+
 def resolve_search_paths(paths: list[Path]) -> list[Path] | None:
     """Validate the files/directories given on the command line, or None when none were given."""
     if not paths:
@@ -336,8 +348,13 @@ def _iter_pattern_matches(directory: Path, patterns: tuple[str, ...]):
         yield from directory.rglob(pattern)
 
 
-def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: list[Path] | None = None):
-    """Yield the files to lint, skipping files generated from a `modular_*.py` source.
+def iter_modeling_files(
+    selected_paths: set[Path] | None = None,
+    search_paths: list[Path] | None = None,
+    include_generated_files: bool = False,
+):
+    """Yield the files to lint, skipping files generated from a `modular_*.py` source unless
+    `include_generated_files` is set.
 
     `selected_paths` short-circuits discovery with an already chosen set (what `--changed-only`
     produces). Otherwise files are discovered under `search_paths` when the caller gave any — any
@@ -347,7 +364,7 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
     """
     if selected_paths is not None:
         for path in sorted(selected_paths):
-            if path.exists() and not _is_generated_file(path):
+            if path.exists() and (include_generated_files or not _is_generated_file(path)):
                 yield path
         return
 
@@ -361,13 +378,13 @@ def iter_modeling_files(selected_paths: set[Path] | None = None, search_paths: l
             else:
                 candidates.add(search_path)
         for path in sorted(candidates):
-            if not _is_generated_file(path):
+            if include_generated_files or not _is_generated_file(path):
                 yield path
         return
 
     for root, patterns in ((MODELS_ROOT, MODELING_PATTERNS), (TESTS_ROOT, TEST_PATTERNS)):
         for path in _iter_pattern_matches(root, patterns):
-            if not _is_generated_file(path):
+            if include_generated_files or not _is_generated_file(path):
                 yield path
 
 
@@ -534,6 +551,8 @@ _activate_rule_registry(DEFAULT_RULE_SPECS_PATH)
 def analyze_file(file_path: Path, text: str, enabled_rules: set[str] | None = None) -> list[Violation]:
     if enabled_rules is None:
         enabled_rules = DEFAULT_ENABLED_TRF_RULES
+    if _is_generated_file(file_path):
+        enabled_rules = _generated_file_rules(enabled_rules)
 
     violations: list[Violation] = []
     source_lines = text.splitlines()
@@ -746,8 +765,15 @@ def main() -> int:
         enabled_rules = resolve_enabled_rules(args)
         search_paths = resolve_search_paths(args.paths)
         selected_paths = get_changed_modeling_files(args.base_ref, search_paths) if args.changed_only else None
+        include_generated_files = bool(_generated_file_rules(enabled_rules))
 
-        modeling_files = list(iter_modeling_files(selected_paths, search_paths))
+        modeling_files = list(
+            iter_modeling_files(
+                selected_paths,
+                search_paths,
+                include_generated_files=include_generated_files,
+            )
+        )
         if search_paths is not None:
             warn_about_search_paths(search_paths, modeling_files, warn_when_empty=selected_paths is None)
 
