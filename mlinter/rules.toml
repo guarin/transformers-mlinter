@@ -1045,7 +1045,7 @@ diff = '''
 [rules.TRF062]
 description = "Inheriting from another class defined in the same modular_*.py file is discouraged."
 default_enabled = true
-allowlist_models = []
+allowlist_models = ["esmfold2", "granite_speech5"]
 cutoff_date = "2026-06-20"
 
 [rules.TRF062.explanation]
