@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `convert_*.py` scripts and files outside a transformers checkout are skipped; models added before the
   `2026-06-20` cutoff are exempt.
 
+- `TRF061`: checks that modality fields declared on `ProcessingKwargs` subclasses use the shared
+  `TextKwargs`, `ImagesKwargs`, `AudioKwargs` and `VideosKwargs` types instead of model-specific classes as we want to deprecate the latter.
+  Checks declarations in the current file, accepts aliases and quoted annotations, and skips imported parents.
+
 ## [0.1.5] - 2026-08-28
 
 ### Added
