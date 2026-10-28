@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF063: _init_weights must use the transformers `initialization` module, not torch.nn.init."""
+"""TRF062: _init_weights must use the transformers `initialization` module, not torch.nn.init."""
 
 import ast
 from pathlib import Path
@@ -79,9 +79,10 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
             if target is None or not target.startswith(_TORCH_INIT + "."):
                 continue
             function_name = target[len(_TORCH_INIT) + 1 :]
-            # Private helpers such as `_calculate_fan_in_and_fan_out` only compute values and never
-            # write to a tensor, so they cannot bypass the initialization flags.
-            if "." in function_name or function_name.startswith("_"):
+            # Only the in-place initializers (`normal_`, `zeros_`, ...) write to a tensor. Helpers such as
+            # `calculate_gain` or `_calculate_fan_in_and_fan_out` only compute a value, so they cannot
+            # overwrite a loaded weight, and the transformers module has no counterpart to suggest.
+            if "." in function_name or function_name.startswith("_") or not function_name.endswith("_"):
                 continue
             if _has_rule_suppression(source_lines, RULE_ID, sub_node.lineno):
                 continue
