@@ -7,6 +7,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
+  standard library is used directly.
+
 ## [0.1.5] - 2026-08-28
 
 ### Added

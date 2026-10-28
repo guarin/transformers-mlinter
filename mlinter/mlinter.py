@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
 from pathlib import Path
@@ -38,12 +39,6 @@ from ._helpers import (
     read_file_head,
 )
 from ._version import __version__
-
-
-try:
-    import tomllib  # Python >= 3.11
-except ModuleNotFoundError:
-    import tomli as tomllib  # Python 3.10 fallback
 
 
 MODELING_PATTERNS = (
