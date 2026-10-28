@@ -30,6 +30,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
   torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
   [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
+- `TRF064`: `<Model>ProcessorKwargs` must not override `_defaults`, `text_kwargs`, `images_kwargs`,
+  `videos_kwargs` or `audio_kwargs`. Set defaults as class attributes of the processor instead, e.g.
+  `text_kwargs = {"padding": False}`. Checks `processing_*.py` and `modular_*.py` for both assignments and
+  re-annotations; narrowing a modality field to a `Deprecated<Model>...Kwargs` backward-compatibility shim is
+  exempt. `csm`, `dia`, `emu3`, `pocket_tts` and `voxtral` are allowlisted.
+- `TRF065`: processors must not subclass `ImagesKwargs`, `TextKwargs`, `AudioKwargs` or `VideosKwargs`. Declare
+  model-specific kwargs at the top level of `<Model>ProcessorKwargs`. Modular files also hold image, video and
+  audio processors, so there a subclass is accepted when named `<Model>ImageProcessorKwargs`,
+  `<Model>VideoProcessorKwargs`/`<Model>VideoProcessorInitKwargs` or `<Model>AudioProcessorKwargs`.
+  `Deprecated<Model>...Kwargs` shims are exempt. `csm`, `dia`, `pocket_tts` and `voxtral` are allowlisted.
 
 ### Changed
 
