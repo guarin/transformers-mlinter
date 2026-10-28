@@ -7,6 +7,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF060`: files in a model directory must import from transformers with relative imports
+  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
+  models added before the `2026-06-20` cutoff are exempt.
+
 ### Changed
 
 - Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
