@@ -7,6 +7,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `TRF060`: files in a model directory must import from transformers with relative imports
+  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
+  models added before the `2026-06-20` cutoff are exempt.
+
+### Changed
+
+- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
+  standard library is used directly.
+- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
+  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
+  are unchanged.
+
 ### Improved
 
 - `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
