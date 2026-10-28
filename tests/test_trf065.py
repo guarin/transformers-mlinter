@@ -17,95 +17,99 @@ from tests.rule_test_utils import RuleTestCase, mlinter
 
 
 class TRF065Test(RuleTestCase):
-    # --- TRF065: <Model>ProcessorKwargs must not override inherited fields ---
+    # --- TRF065: processors must not subclass the shared modality kwargs ---
 
     def _trf065(self, source: str, file_name: str = "processing_foo.py") -> list:
         return self._run(mlinter.TRF065, source, file_name=file_name)
 
-    def test_flags_defaults_in_class_body(self):
+    def test_flags_modality_kwargs_subclasses_in_processing(self):
         source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    _defaults = {"text_kwargs": {"padding": False}}
-"""
-        violations = self._trf065(source)
-        self.assertEqual(len(violations), 1)
-        self.assertEqual(violations[0].line_number, 3)
-        self.assertIn("`FooProcessorKwargs` overrides `_defaults`", violations[0].message)
-
-    def test_flags_modality_default_values(self):
-        source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    text_kwargs = {"padding": False}
-    images_kwargs: FooImagesKwargs = {"do_resize": True}
-"""
-        violations = self._trf065(source)
-        self.assertEqual([v.line_number for v in violations], [3, 4])
-        self.assertIn("class attribute of the processor", violations[0].message)
-
-    def test_flags_type_annotation_overrides(self):
-        source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    _defaults: dict
-    images_kwargs: FooImageProcessorKwargs
-    text_kwargs: TextKwargs | None
-    videos_kwargs: VideosKwargs
+class FooImagesKwargs(ImagesKwargs, total=False):
     num_crops: int
+
+class FooTextKwargs(TextKwargs, total=False):
+    pass
+
+class FooAudioKwargs(AudioKwargs, total=False):
+    pass
+
+class FooVideosKwargs(processing_utils.VideosKwargs, total=False):
+    pass
 """
         violations = self._trf065(source)
-        self.assertEqual([v.line_number for v in violations], [3, 4, 5, 6])
-        self.assertIn("Keep the type inherited from `ProcessingKwargs`", violations[1].message)
+        self.assertEqual([v.line_number for v in violations], [2, 5, 8, 11])
+        self.assertIn("`FooImagesKwargs` subclasses `ImagesKwargs`", violations[0].message)
 
-    def test_allows_deprecated_shim_annotation(self):
+    def test_flags_image_processor_naming_in_processing(self):
+        # Processing files hold processors only, so the image processor naming is no escape hatch.
         source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    text_kwargs: DeprecatedFooTextKwargs
+class FooImageProcessorKwargs(ImagesKwargs, total=False):
+    pass
+"""
+        self.assertEqual(len(self._trf065(source)), 1)
+
+    def test_allows_deprecated_shims(self):
+        source = """
+class DeprecatedFooTextKwargs(TextKwargs, total=False):
     add_eos_token: bool
 """
         self.assertEqual(self._trf065(source), [])
 
-    def test_flags_subclass_of_other_model_processor_kwargs_in_modular(self):
+    def test_flags_subclass_of_other_model_modality_kwargs(self):
         source = """
-from ..bar.processing_bar import BarProcessorKwargs
+from ..bar.processing_bar import BarImagesKwargs
 
-class FooProcessorKwargs(BarProcessorKwargs, total=False):
-    _defaults = {"text_kwargs": {"padding": False}}
+class FooImagesKwargs(BarImagesKwargs, total=False):
+    pass
 """
-        violations = self._trf065(source, file_name="modular_foo.py")
-        self.assertEqual(len(violations), 1)
+        self.assertEqual(len(self._trf065(source, file_name="modular_foo.py")), 1)
 
-    def test_allows_defaults_on_processor_class(self):
+    def test_modular_allows_image_and_video_processor_kwargs(self):
         source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    num_crops: int
+class FooImageProcessorKwargs(ImagesKwargs, total=False):
+    patch_size: int
 
+class FooVideoProcessorKwargs(VideosKwargs, total=False):
+    pass
 
-class FooProcessor(ProcessorMixin):
-    valid_processor_kwargs = FooProcessorKwargs
-    text_kwargs = {"padding": False}
-    images_kwargs = {"do_resize": True}
-"""
-        self.assertEqual(self._trf065(source), [])
+class FooVideoProcessorInitKwargs(VideosKwargs, total=False):
+    pass
 
-    def test_ignores_sub_processor_kwargs(self):
-        source = """
-class FooImageProcessorKwargs(BarImageProcessorKwargs, total=False):
-    images_kwargs = {}
+class FooAudioProcessorKwargs(AudioKwargs, total=False):
+    pass
 
-class FooAudioProcessorKwargs(BarAudioProcessorKwargs, total=False):
-    audio_kwargs = {}
+class DeprecatedFooImagesKwargs(ImagesKwargs, total=False):
+    pass
 """
         self.assertEqual(self._trf065(source, file_name="modular_foo.py"), [])
 
-    def test_ignores_other_file_types(self):
+    def test_modular_flags_processor_level_names(self):
         source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    _defaults = {}
+class FooImagesKwargs(ImagesKwargs, total=False):
+    pass
+
+class FooTextKwargs(TextKwargs, total=False):
+    pass
+
+class FooImageProcessorKwargs(VideosKwargs, total=False):
+    pass
 """
-        self.assertEqual(self._trf065(source, file_name="modeling_foo.py"), [])
+        violations = self._trf065(source, file_name="modular_foo.py")
+        self.assertEqual([v.line_number for v in violations], [2, 5, 8])
+        self.assertIn("name it `<Model>ImageProcessorKwargs`", violations[0].message)
+        # `TextKwargs` has no image/video processor counterpart to suggest.
+        self.assertNotIn("name it", violations[1].message)
+
+    def test_ignores_image_processing_files(self):
+        source = """
+class FooImagesKwargs(ImagesKwargs, total=False):
+    pass
+"""
+        self.assertEqual(self._trf065(source, file_name="image_processing_foo.py"), [])
 
     def test_suppression(self):
         source = """
-class FooProcessorKwargs(ProcessingKwargs, total=False):
-    _defaults = {}  # trf-ignore: TRF065
+class FooAudioKwargs(AudioKwargs, total=False):  # trf-ignore: TRF065
+    pass
 """
         self.assertEqual(self._trf065(source), [])

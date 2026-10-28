@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF065: `<Model>ProcessorKwargs` must not override `_defaults` or the modality kwargs fields."""
+"""TRF065: Processors must not subclass the shared modality kwargs (`ImagesKwargs`, `TextKwargs`, ...)."""
 
 import ast
 from pathlib import Path
@@ -23,86 +23,86 @@ from ._helpers import Violation, _has_rule_suppression, _simple_name, full_name
 RULE_ID = ""  # Set by discovery
 
 CHECKED_FILE_PREFIXES = ("processing_", "modular_")
-# Fields of `ProcessingKwargs` that a subclass must inherit untouched.
-INHERITED_FIELDS = frozenset({"_defaults", "text_kwargs", "images_kwargs", "videos_kwargs", "audio_kwargs"})
-# `<Model>ProcessorKwargs` classes inherit `ProcessingKwargs` directly or another model's `<Model>ProcessorKwargs`.
-PROCESSOR_KWARGS_SUFFIXES = ("ProcessingKwargs", "ProcessorKwargs")
-# Image, video and audio processor kwargs end with `ProcessorKwargs` too, but are a different kind of TypedDict.
-NON_PROCESSOR_KWARGS_SUFFIXES = ("ImageProcessorKwargs", "VideoProcessorKwargs", "AudioProcessorKwargs")
+# Shared modality kwargs, keyed by the `ProcessingKwargs` field that holds them.
+MODALITY_KWARGS = {
+    "ImagesKwargs": "images_kwargs",
+    "TextKwargs": "text_kwargs",
+    "AudioKwargs": "audio_kwargs",
+    "VideosKwargs": "videos_kwargs",
+}
 # Backward-compatibility shims that keep accepting the old nested keys are named `Deprecated<Model><Modality>Kwargs`.
 DEPRECATED_PREFIX = "Deprecated"
+# A modular file also holds image, video and audio processors, which legitimately extend the shared kwargs.
+# Those have to follow the sub-processor naming so they can be told apart from processor-level subclasses.
+PROCESSOR_KWARGS_SUFFIXES_BY_BASE = {
+    "ImagesKwargs": ("ImageProcessorKwargs",),
+    "VideosKwargs": ("VideoProcessorKwargs", "VideoProcessorInitKwargs"),
+    "AudioKwargs": ("AudioProcessorKwargs",),
+}
 
 
-def _is_processor_kwargs_class(class_node: ast.ClassDef) -> bool:
+def _base_names(class_node: ast.ClassDef) -> list[str]:
+    names = []
     for base in class_node.bases:
         try:
-            name = _simple_name(full_name(base))
+            names.append(_simple_name(full_name(base)))
         except ValueError:
             continue
-        if name.endswith(PROCESSOR_KWARGS_SUFFIXES) and not name.endswith(NON_PROCESSOR_KWARGS_SUFFIXES):
-            return True
-    return False
+    return names
 
 
-def _is_deprecated_shim(annotation: ast.expr) -> bool:
-    try:
-        return _simple_name(full_name(annotation)).startswith(DEPRECATED_PREFIX)
-    except ValueError:
-        return False
+def _modality_base(class_node: ast.ClassDef) -> str | None:
+    """The shared modality kwargs `class_node` extends, directly or through another model's `<Model>ImagesKwargs`."""
+    for base in _base_names(class_node):
+        for modality_base in MODALITY_KWARGS:
+            if base == modality_base or (base.endswith(modality_base) and not base.startswith(DEPRECATED_PREFIX)):
+                return modality_base
+    return None
 
 
-def _overridden_fields(class_node: ast.ClassDef) -> list[tuple[ast.stmt, str]]:
-    """`(statement, field)` for every inherited field the class body assigns or re-annotates."""
-    found = []
-    for stmt in class_node.body:
-        if isinstance(stmt, ast.Assign):
-            targets = stmt.targets
-        elif isinstance(stmt, ast.AnnAssign):
-            # Narrowing a modality field to a `Deprecated...Kwargs` shim keeps old nested keys working.
-            if stmt.value is None and _is_deprecated_shim(stmt.annotation):
-                continue
-            targets = [stmt.target]
-        else:
+def _subclass_message(class_name: str, modality_base: str) -> str:
+    field = MODALITY_KWARGS[modality_base]
+    return (
+        f"{RULE_ID}: `{class_name}` subclasses `{modality_base}`. Model-specific processor kwargs belong at the top "
+        f"level of `<Model>ProcessorKwargs`, not nested under `{field}`; defaults go in a `{field}` class attribute "
+        "of the processor. If the class only keeps old nested keys working, name it "
+        f"`{DEPRECATED_PREFIX}<Model>...Kwargs`. Image, video and audio processor kwargs live in "
+        "`image_processing_*.py`/`video_processing_*.py`/`audio_processing_*.py`."
+    )
+
+
+def _modular_subclass_message(class_name: str, modality_base: str) -> str:
+    suffixes = PROCESSOR_KWARGS_SUFFIXES_BY_BASE.get(modality_base, ())
+    allowed = " or ".join(f"`<Model>{suffix}`" for suffix in suffixes)
+    sub_processor_hint = f"If it belongs to an image, video or audio processor, name it {allowed}. " if allowed else ""
+    return (
+        f"{RULE_ID}: `{class_name}` subclasses `{modality_base}` in a modular file. {sub_processor_hint}"
+        "Processors must not extend the shared modality kwargs: put model-specific kwargs at the top level of "
+        f"`<Model>ProcessorKwargs`, or name a backward-compatibility shim `{DEPRECATED_PREFIX}<Model>...Kwargs`."
+    )
+
+
+def _iter_violations(tree: ast.Module, file_name: str):
+    is_modular = file_name.startswith("modular_")
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
             continue
-        for target in targets:
-            if isinstance(target, ast.Name) and target.id in INHERITED_FIELDS:
-                found.append((stmt, target.id))
-    return found
 
-
-def _message(class_name: str, field: str, stmt: ast.stmt) -> str:
-    if field == "_defaults":
-        fix = (
-            "Move each entry of `_defaults` to a class attribute of the processor, e.g. "
-            '`class FooProcessor(ProcessorMixin): text_kwargs = {"padding": False}`. '
-            "`ProcessingKwargs._defaults` is deprecated and only kept for backward compatibility."
-        )
-    elif isinstance(stmt, ast.AnnAssign) and stmt.value is None:
-        fix = (
-            "Keep the type inherited from `ProcessingKwargs` and declare model-specific kwargs at the top level "
-            f"of `{class_name}`. Only a `{DEPRECATED_PREFIX}<Model>...Kwargs` backward-compatibility shim may be "
-            "used here."
-        )
-    else:
-        fix = (
-            f"Set defaults as a class attribute of the processor instead, e.g. "
-            f"`class FooProcessor(ProcessorMixin): {field} = {{...}}`."
-        )
-    return f"{RULE_ID}: `{class_name}` overrides `{field}` inherited from `ProcessingKwargs`. {fix}"
+        modality_base = _modality_base(node)
+        if modality_base is not None and not node.name.startswith(DEPRECATED_PREFIX):
+            if not is_modular:
+                yield node.lineno, _subclass_message(node.name, modality_base)
+            elif not node.name.endswith(PROCESSOR_KWARGS_SUFFIXES_BY_BASE.get(modality_base, ())):
+                yield node.lineno, _modular_subclass_message(node.name, modality_base)
 
 
 def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Violation]:
-    if not file_path.name.startswith(CHECKED_FILE_PREFIXES):
+    file_name = file_path.name
+    if not file_name.startswith(CHECKED_FILE_PREFIXES):
         return []
 
-    violations = []
-    for node in tree.body:
-        if not (isinstance(node, ast.ClassDef) and _is_processor_kwargs_class(node)):
-            continue
-        for stmt, field in _overridden_fields(node):
-            if _has_rule_suppression(source_lines, RULE_ID, stmt.lineno):
-                continue
-            violations.append(
-                Violation(file_path=file_path, line_number=stmt.lineno, message=_message(node.name, field, stmt))
-            )
-    return violations
+    return [
+        Violation(file_path=file_path, line_number=line_number, message=message)
+        for line_number, message in _iter_violations(tree, file_name)
+        if not _has_rule_suppression(source_lines, RULE_ID, line_number)
+    ]
