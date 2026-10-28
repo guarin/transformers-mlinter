@@ -24,6 +24,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
   `calculate_gain`, are not flagged. Existing models were migrated in
   [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
+- `TRF063`: a model-local relative import that runs at module import time must not need backends beyond what the
+  importing file declares (its base requirements, the weakest `@requires` among its `__all__` objects, or an
+  enclosing `is_<backend>_available()` guard). Imports are followed through sibling files; a `modular_*.py` file is
+  checked through the files it generates. Catches a `@requires(backends=("vision",))` processor importing a
+  torchvision image processor, which breaks `from transformers import *` with Pillow but no torch, as in
+  [huggingface/transformers#49748](https://github.com/huggingface/transformers/pull/49748).
 
 ### Changed
 
@@ -32,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
   editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
   are unchanged.
+- The lint cache now hashes every sibling file in the model directory, so editing an imported file re-checks its
+  importers.
 
 ### Improved
 
