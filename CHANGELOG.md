@@ -13,6 +13,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
   `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
   models added before the `2026-06-20` cutoff are exempt.
+- `TRF061`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file. The
+  modular converter writes out bases imported from another model in full but keeps a same-file base as it is, so
+  the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
+  `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
+  2026-06-20 are exempt.
 
 ### Changed
 

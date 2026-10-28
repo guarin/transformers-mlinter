@@ -1059,3 +1059,27 @@ diff = '''
 +from .configuration_acme import AcmeConfig
 +from ... import initialization as init
 '''
+
+[rules.TRF061]
+description = "A class in a modular_*.py file must not subclass another class defined in the same file: the generated modeling file keeps that inheritance."
+default_enabled = true
+allowlist_models = ["esmfold2", "granite_speech5"]
+cutoff_date = "2026-06-20"
+
+[rules.TRF061.explanation]
+what_it_does = "In modular_*.py, flags a class whose base is another class defined earlier in the same file. Bases imported from another model are what modular inheritance is for and are not flagged. `<Model>PreTrainedModel` and its subclasses are exempt, since every model class is meant to build on them, and so is a backward-compatibility alias whose body only calls `super().__init__()`, optionally after a deprecation warning."
+why_bad = "The modular converter writes out a base imported from another model in full, but leaves a base defined in the same modular file as it is. The generated modeling file then keeps the inheritance, for example `class ParakeetTDTJointNetwork(ParakeetRNNTJointNetwork)` with a seven-line body, so a reader has to reassemble the class from its parent. Modeling files are meant to read one class at a time, with reuse expressed only in the modular file through imports from other models."
+diff = '''
+ from ..llama.modeling_llama import LlamaDecoderLayer
+
+
+ class AcmeDecoderLayer(LlamaDecoderLayer):
+     pass
+
+
+-class AcmeSparseDecoderLayer(AcmeDecoderLayer):
++class AcmeSparseDecoderLayer(LlamaDecoderLayer):
+     def __init__(self, config, layer_idx):
+         super().__init__(config, layer_idx)
+         self.mlp = AcmeSparseMoeBlock(config)
+'''
