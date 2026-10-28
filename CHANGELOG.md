@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
   standard library is used directly.
+- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
+  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
+  are unchanged.
 
 ## [0.1.5] - 2026-08-28
 
