@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""TRF062: classes in a modular file must not subclass another class defined in the same file."""
+"""TRF061: classes in a modular file must not subclass another class defined in the same file."""
 
 import ast
 from pathlib import Path
@@ -125,8 +125,9 @@ def check(tree: ast.Module, file_path: Path, source_lines: list[str]) -> list[Vi
                 file_path=file_path,
                 line_number=node.lineno,
                 message=(
-                    f"{RULE_ID}: {node.name} subclasses {parents}, which is defined in this modular file. "
-                    "This is discouraged, try to subclass an imported class instead, or write the class out in full."
+                    f"{RULE_ID}: {node.name} subclasses {parents}, defined earlier in this modular file. The "
+                    "generated modeling file keeps that inheritance, so the class cannot be read on its own there. "
+                    "Subclass the class imported from another model instead, or write the class out in full."
                 ),
             )
         )

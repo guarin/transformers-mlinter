@@ -13,16 +13,16 @@
 # limitations under the License.
 
 
-from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, _trf062_mod, date, mlinter, patch
+from tests.rule_test_utils import Path, RuleTestCase, _helpers_mod, _trf061_mod, date, mlinter, patch
 
 
-class TRF062Test(RuleTestCase):
-    # --- TRF062: no local inheritance in modular files ---
+class TRF061Test(RuleTestCase):
+    # --- TRF061: no local inheritance in modular files ---
 
-    def _run_trf062(self, source):
-        return self._run(mlinter.TRF062, source, file_name="modular_foo.py")
+    def _run_trf061(self, source):
+        return self._run(mlinter.TRF061, source, file_name="modular_foo.py")
 
-    def test_trf062_flags_subclass_of_local_class(self):
+    def test_trf061_flags_subclass_of_local_class(self):
         source = """
 from ..llama.modeling_llama import LlamaDecoderLayer
 
@@ -34,12 +34,12 @@ class FooSparseDecoderLayer(FooDecoderLayer):
         super().__init__(config, layer_idx)
         self.mlp = FooSparseMoeBlock(config)
 """
-        violations = self._run_trf062(source)
+        violations = self._run_trf061(source)
         self.assertEqual(len(violations), 1)
         self.assertEqual(violations[0].line_number, 7)
         self.assertIn("FooSparseDecoderLayer subclasses FooDecoderLayer", violations[0].message)
 
-    def test_trf062_allows_imported_bases(self):
+    def test_trf061_allows_imported_bases(self):
         source = """
 from torch import nn
 from ..llama.modeling_llama import LlamaDecoderLayer, LlamaMLP
@@ -53,9 +53,9 @@ class FooDecoderLayer(LlamaDecoderLayer):
 class FooNorm(nn.Module):
     pass
 """
-        self.assertEqual(self._run_trf062(source), [])
+        self.assertEqual(self._run_trf061(source), [])
 
-    def test_trf062_flags_empty_subclass_and_generic_base(self):
+    def test_trf061_flags_empty_subclass_and_generic_base(self):
         source = """
 from ..llama.modeling_llama import LlamaRotaryEmbedding
 
@@ -68,10 +68,10 @@ class FooTalkerRotaryEmbedding(FooThinkerRotaryEmbedding):
 class FooOtherRotaryEmbedding(FooThinkerRotaryEmbedding[int]):
     pass
 """
-        violations = self._run_trf062(source)
+        violations = self._run_trf061(source)
         self.assertEqual([v.line_number for v in violations], [7, 10])
 
-    def test_trf062_allows_pretrained_model_and_its_subclasses(self):
+    def test_trf061_allows_pretrained_model_and_its_subclasses(self):
         source = """
 from ..llama.modeling_llama import LlamaPreTrainedModel
 
@@ -90,9 +90,9 @@ class FooThinkerForConditionalGeneration(FooPreTrainedModelForConditionalGenerat
 class FooFrameLevelModel(FooModel):
     pass
 """
-        self.assertEqual(self._run_trf062(source), [])
+        self.assertEqual(self._run_trf061(source), [])
 
-    def test_trf062_allows_backward_compat_alias(self):
+    def test_trf061_allows_backward_compat_alias(self):
         source = """
 import warnings
 from ..llama.modeling_llama import LlamaMLP
@@ -116,9 +116,9 @@ class FooOldestMLP(FooMLP):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 """
-        self.assertEqual(self._run_trf062(source), [])
+        self.assertEqual(self._run_trf061(source), [])
 
-    def test_trf062_flags_alias_with_extra_members(self):
+    def test_trf061_flags_alias_with_extra_members(self):
         source = """
 from ..llama.modeling_llama import LlamaMLP
 
@@ -137,10 +137,10 @@ class FooOlderMLP(FooMLP):
     def forward(self, x):
         return x
 """
-        violations = self._run_trf062(source)
+        violations = self._run_trf061(source)
         self.assertEqual([v.line_number for v in violations], [7, 12])
 
-    def test_trf062_ignores_non_modular_files(self):
+    def test_trf061_ignores_non_modular_files(self):
         source = """
 class FooMLP(nn.Module):
     pass
@@ -148,20 +148,20 @@ class FooMLP(nn.Module):
 class FooOtherMLP(FooMLP):
     pass
 """
-        self.assertEqual(self._run(mlinter.TRF062, source, file_name="modeling_foo.py"), [])
+        self.assertEqual(self._run(mlinter.TRF061, source, file_name="modeling_foo.py"), [])
 
-    def test_trf062_respects_suppression(self):
+    def test_trf061_respects_suppression(self):
         source = """
 class FooMLP(nn.Module):
     pass
 
-# trf-ignore: TRF062
+# trf-ignore: TRF061
 class FooOtherMLP(FooMLP):
     pass
 """
-        self.assertEqual(self._run_trf062(source), [])
+        self.assertEqual(self._run_trf061(source), [])
 
-    def test_trf062_exempts_models_before_cutoff(self):
+    def test_trf061_exempts_models_before_cutoff(self):
         source = """
 class FooMLP(nn.Module):
     pass
@@ -171,6 +171,6 @@ class FooOtherMLP(FooMLP):
 """
         file_path = Path("src/transformers/models/foo/modular_foo.py")
         with patch.object(_helpers_mod, "model_contribution_date", return_value=date(2023, 1, 1)):
-            with patch.object(_trf062_mod, "CUTOFF_DATE", "2026-06-20"):
-                violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF062})
-        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF062], [])
+            with patch.object(_trf061_mod, "CUTOFF_DATE", "2026-06-20"):
+                violations = mlinter.analyze_file(file_path, source, enabled_rules={mlinter.TRF061})
+        self.assertEqual([v for v in violations if v.rule_id == mlinter.TRF061], [])

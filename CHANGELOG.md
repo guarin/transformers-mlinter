@@ -9,7 +9,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `TRF062`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file as this is discouraged. The exception is inheritance from `PreTrainedModel` subclasses. Models added before 2026-06-20 are exempt.
+- `TRF060`: files in a model directory must import from transformers with relative imports
+  (`from ...modeling_utils import X`), not `from transformers.modeling_utils import X` or
+  `import transformers...`. Tests, `convert_*.py` scripts and files outside a transformers checkout are skipped;
+  models added before the `2026-06-20` cutoff are exempt.
+- `TRF061`: flags a class in a `modular_*.py` file that subclasses another class defined in the same file. The
+  modular converter writes out bases imported from another model in full but keeps a same-file base as it is, so
+  the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
+  `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
+  2026-06-20 are exempt.
+
+### Changed
+
+- Python 3.11 is now the minimum supported version. The `tomli` dependency is gone: `tomllib` from the
+  standard library is used directly.
+- Console output prints a violation's location as `path:42:` instead of `path:L42:`, the `file:line` form
+  editors and terminals turn into a link that jumps to the line. `--output-json` and `--github-annotations`
+  are unchanged.
+
+### Improved
+
+- `TRF057` now covers video processors: a `BaseVideoProcessor` subclass in `video_processing_*.py` (or the
+  `modular_*.py` it is generated from) needs `@auto_docstring` on the class and on its `preprocess` method, as
+  image processors already do.
 
 ## [0.1.5] - 2026-08-28
 
