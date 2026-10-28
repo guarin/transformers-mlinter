@@ -18,6 +18,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   the generated modeling file inherits from a sibling class and can no longer be read one class at a time.
   `<Model>PreTrainedModel` subclasses and backward-compatibility aliases are exempt; models added before
   2026-06-20 are exempt.
+- `TRF062`: `_init_weights` must initialize tensors with the transformers `initialization` module
+  (`from ... import initialization as init`), not `torch.nn.init`. The transformers functions skip a tensor
+  already loaded from a checkpoint; `torch.nn.init` is only guarded by a patch applied during
+  `initialize_weights`, which a function imported by name escapes. Helpers that only compute a value, such as
+  `calculate_gain`, are not flagged. Existing models were migrated in
+  [huggingface/transformers#49573](https://github.com/huggingface/transformers/pull/49573).
 
 ### Changed
 
